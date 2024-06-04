@@ -1,0 +1,172 @@
+---
+title: "ST 558 HW3"
+format: html
+editor: visual
+---
+
+# Task 1
+
+1.  If your working directory is myfolder/homework/, what relative path would you specify to get the file located at myfolder/MyData.csv?
+
+> ../MyData.csv
+
+2.  What are the major benefits of using R projects?
+
+> The major benefit of using R projects is being able to connect to a repository such as GitHub in order to store and track your progress. Another benefit of using R projects is being able to collaborate with other people on code and projects. As you update your code and get to a stopping point, you can commit these changes to the repository in GitHub that other people have access to.
+
+3.  What is git and what is github?
+
+> Git is a version control software that allows you to associate git with a folder on your computer, whereas github is a web-based hosting service for git repositories.
+
+4.  What are the two main differences between a tibble and a data.frame?
+
+> One main difference is that tibbles do not coerce down to vectors when you reference rows or columns using the \[\] operator. Another main difference is that the tibble has fancy printing, where there is information on the number of observations and columns, and only the first rows show to save space. The data frame does not have this when you print it.
+
+5.  Rewrite the following nested function call using baseR’s chaining operator: arrange(filter(select(as_tibble(iris), starts_with("Petal"), Species), Petal.Length \< 1.55), Species)
+
+> iris 
+\|\> as_tibble() 
+\|\> select(starts_with("Petal"), Species) 
+\|\> filter(Petal.Length \< 1.55) 
+\|\> arrange(Species)
+
+6.  What is meant by long format data and wide format data? Which do we generally prefer for statistical analysis?
+
+> In long format data, there are multiple rows for each subject, whereas in wide format data there is one row for each subject. Wide format is used when a subject has only one measurement for each variable. Long format is used when some subjects have multiple measurements for each variable. In statistical analysis, we usually prefer long format data.
+
+# Task 2
+
+## Glass Data
+
+```{r}
+library(tidyverse)
+glass_data <- read_csv("https://www4.stat.ncsu.edu/~online/datasets/glass.data", 
+                       col_names = c("Id", "RI", "Na", "Mg", "Al", "Si", "K", "Ca", "Ba",   "Fe", "Type_of_glass"))
+glass_data
+glass_data |>
+  mutate(Type_of_glass = ifelse(Type_of_glass==1, "building_windows_float_processed", ifelse(Type_of_glass==2, "building_windows_non_float_processed", ifelse(Type_of_glass==3, " vehicle_windows_float_processed", ifelse(Type_of_glass == 4, "vehicle_windows_non_float_processed", ifelse(Type_of_glass == 5, "containers", ifelse(Type_of_glass == 6, "tableware", ifelse(Type_of_glass == 7, "headlamps", NA)))))))) |>
+  filter(Fe < .2 & Type_of_glass %in% c("tableware", "headlamps"))
+```
+
+## Yeast Data
+
+```{r}
+yeast_data <- read_fwf("https://www4.stat.ncsu.edu/~online/datasets/yeast.data", 
+         fwf_widths(c(11,6,6,6,6,6,6,6,6,6),
+                    c("seq_name", "mcg", "gvh", "alm", "mit", "erl", "pox", "vac", "nuc", 
+                      "class")))
+yeast_data
+
+yeast_data |>
+  select(-c("seq_name", "nuc")) |>
+  group_by(class) |>
+  mutate(across(where(is.numeric), list(mean = mean, median = median), .names = "{.col}_{.fn}"))
+```
+
+# Task 2 Part 2- Combining Excel and Delimited Data
+
+```{r}
+library(readxl)
+wine_data <- read_excel("white-wine.xlsx")
+wine_data
+# Reading names sheet
+names_df <-  read_excel("white-wine.xlsx", 
+                        sheet = excel_sheets("white-wine.xlsx")[2])
+# Replacing column names
+colnames(wine_data) <- names_df$Variables
+wine_data
+# Adding column to indicate the wines are white
+wine_data$type <- "white"
+wine_data
+```
+
+We will now read in the red wine file and merge the two together.
+
+```{r}
+red_wine_data <- read_delim("red-wine.csv", delim = ";")
+colnames(red_wine_data) <- names_df$Variables
+red_wine_data
+red_wine_data$type <- "red"
+red_wine_data
+# Merging the two together
+combined_wine_df <- bind_rows(list(wine_data, red_wine_data))
+combined_wine_df
+```
+
+We will now make a chain to filter, sort and make new numerical variables.
+
+```{r}
+combined_wine_df |>
+  filter(quality > 6.5 & alcohol < 132) |>
+  arrange(desc(quality)) |>
+  select(contains("acid"), alcohol, type, quality) |>
+  group_by(quality) |>
+  mutate(alcohol_mean = mean(alcohol), alcohol_sd = sd(alcohol))
+  
+```
+
+# Task 3
+
+```{r}
+library(DBI)
+library(RSQLite)
+con <- dbConnect(SQLite(), "lahman.db")
+dbListTables(con)
+tbl(con, "Teams") |>
+  filter(yearID == 2015) |>
+  collect()
+```
+
+We will now use SQL to do the same as above.
+
+```{r}
+tbl(con, sql("SELECT *
+              FROM `Teams`
+              WHERE (`yearID` = 2015)")
+    ) |>
+  collect()
+```
+
+We will now look at the Hall of Fame table.
+
+```{r}
+HOF_table <- tbl(con, "HallOfFame") |> 
+filter(inducted == "Y") |>
+select(playerID, yearID, category) |> 
+collect()
+HOF_names <- inner_join(tbl(con, "People") |>
+          select(playerID, nameFirst, nameLast) |>
+            collect(), HOF_table, by = join_by(playerID == playerID)) |>
+collect()
+HOF_names
+```
+
+We will now look at the Managers table.
+
+```{r}
+Managers <- tbl(con, "Managers") |>
+select(playerID, G, W, L) |>
+group_by(playerID) |>
+summarize(G_managed = sum(G, na.rm = TRUE),
+Total_W = sum(W, na.rm = TRUE),
+Total_L = sum(L, na.rm = TRUE)) |>
+  collect() |>
+  mutate(win_loss_percentage = Total_W/G_managed) |>
+  arrange(desc(Total_W/G_managed)) |>
+  collect()
+Managers
+```
+
+We will now return all players in the Hall of Fame that managed a team.
+
+```{r}
+inner_join(HOF_names, Managers, by = join_by(playerID==playerID))
+```
+
+
+
+
+
+
+
+
